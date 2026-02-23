@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Ice in drink melt demo calculator</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; max-width: 980px; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    .muted { color:#555; font-size: 13px; line-height: 1.35; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 14px 0; }
+    .grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+    @media (max-width: 760px){ .grid{ grid-template-columns: 1fr; } }
+    .field { }
+    .label { font-weight: 700; margin-bottom: 6px; }
+    .step { display:flex; align-items: stretch; gap: 8px; }
+    .step button { width: 56px; border: 1px solid #111; background:#fff; border-radius: 10px; font-size: 16px; cursor:pointer; }
+    .step input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 10px; font-size: 16px; text-align: center; }
+    select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 10px; font-size: 16px; }
+    .result { font-size: 18px; font-weight: 800; margin-top: 8px; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .pill { border:1px solid #ddd; border-radius: 999px; padding: 6px 10px; font-size: 13px; }
+    canvas { width: 100%; height: 360px; border:1px solid #eee; border-radius: 12px; }
+    code { background:#f6f6f6; padding: 2px 6px; border-radius: 6px; }
+    .warn { color:#8a2d00; font-weight:700; }
+  </style>
+</head>
+<body>
+  <h1>Ice cube melting in a drink — simple demo calculator</h1>
+  <div class="muted">
+    This estimates how fast a cube melts inside a drink by simulating heat flow from the liquid into the ice,
+    while the liquid exchanges heat with ambient air through the container.
+    It’s intentionally simple and meant for demos; the biggest levers are <strong>liquid temperature</strong> and <strong>stirring</strong>.
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div class="field">
+        <div class="label">Ambient temperature (°C)</div>
+        <div class="step">
+          <button data-step="-5" data-target="Ta">-5</button>
+          <input id="Ta" type="number" step="0.1" value="25">
+          <button data-step="5" data-target="Ta">+5</button>
+        </div>
+        <div class="muted">Air around the glass (room / fridge / outdoors).</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Liquid temperature (°C)</div>
+        <div class="step">
+          <button data-step="-5" data-target="Tl0">-5</button>
+          <input id="Tl0" type="number" step="0.1" value="20">
+          <button data-step="5" data-target="Tl0">+5</button>
+        </div>
+        <div class="muted">Starting drink temperature (measured before ice).</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Initial ice temperature (°C)</div>
+        <div class="step">
+          <button data-step="-5" data-target="Ti0">-5</button>
+          <input id="Ti0" type="number" step="0.1" value="-5">
+          <button data-step="5" data-target="Ti0">+5</button>
+        </div>
+        <div class="muted">Typical freezer ice can be -18°C; for repeatability, keep it consistent.</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Ice cube side length (cm)</div>
+        <div class="step">
+          <button data-step="-5" data-target="side">-5</button>
+          <input id="side" type="number" step="0.1" value="2.5">
+          <button data-step="5" data-target="side">+5</button>
+        </div>
+        <div class="muted">Larger cubes melt slower (area-to-volume effect).</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Drink volume (mL)</div>
+        <div class="step">
+          <button data-step="-5" data-target="Vml">-5</button>
+          <input id="Vml" type="number" step="1" value="250">
+          <button data-step="5" data-target="Vml">+5</button>
+        </div>
+        <div class="muted">More volume = more heat available = faster melting (until drink cools).</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Stirring / motion</div>
+        <select id="stir">
+          <option value="still">Still (no stirring)</option>
+          <option value="swirl" selected>Swirl occasionally</option>
+          <option value="stirred">Actively stirred</option>
+        </select>
+        <div class="muted">This strongly changes heat transfer at the ice surface.</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Container type</div>
+        <select id="cup">
+          <option value="insulated">Insulated / double-wall</option>
+          <option value="glass" selected>Thin glass</option>
+          <option value="metal">Metal cup</option>
+        </select>
+        <div class="muted">Affects how quickly the drink exchanges heat with ambient air.</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Plot length (minutes)</div>
+        <div class="step">
+          <button data-step="-5" data-target="plotMin">-5</button>
+          <input id="plotMin" type="number" step="1" value="60">
+          <button data-step="5" data-target="plotMin">+5</button>
+        </div>
+        <div class="muted">Chart shows the first N minutes (auto-extends if melt takes longer).</div>
+      </div>
+    </div>
+
+    <div id="out" class="result"></div>
+    <div id="meta" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="pill"><strong>Chart:</strong> drink temperature (°C) + ice remaining (%) vs time</div>
+      <div class="pill">Model step: 1 s</div>
+      <div class="pill">Ice assumed melts at 0°C</div>
+    </div>
+    <div style="margin-top:10px;">
+      <canvas id="chart" width="960" height="360"></canvas>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      Note: If <code>liquid temperature</code> is ≤ 0°C, the cube won’t fully melt in this model (it will tend toward equilibrium).
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ---- Constants (SI) ----
+  const rhoIce = 917.0;        // kg/m^3
+  const cpIce  = 2100.0;       // J/(kg*K)
+  const Lf     = 334000.0;     // J/kg
+  const rhoW   = 997.0;        // kg/m^3
+  const cpW    = 4180.0;       // J/(kg*K)
+
+  // Heat transfer from liquid to ice surface: choose h_liq by motion
+  function hLiquid(stir){
+    // Conservative demo-oriented values (order-of-magnitude):
+    if (stir === "still")  return 120;  // W/m^2K
+    if (stir === "swirl")  return 250;  // W/m^2K
+    return 450;                         // stirred
+  }
+
+  // Heat exchange between ambient and liquid through container: UA (W/K)
+  // This lumps container + outside convection. Tuned for demonstration, not a specific glass.
+  function UAForCup(cup){
+    if (cup === "insulated") return 0.8;
+    if (cup === "metal")     return 6.0;
+    return 2.5; // glass
+  }
+
+  function clamp(x, lo, hi){ return Math.min(hi, Math.max(lo, x)); }
+
+  function fmtTime(sec){
+    if (!isFinite(sec)) return "∞";
+    const m = sec/60;
+    if (m < 120) return `${m.toFixed(1)} min`;
+    const h = m/60;
+    if (h < 72) return `${h.toFixed(2)} h`;
+    const d = h/24;
+    return `${d.toFixed(2)} days`;
+  }
+
+  function readInputs(){
+    const Ta   = parseFloat(document.getElementById("Ta").value);
+    const Tl0  = parseFloat(document.getElementById("Tl0").value);
+    const Ti0  = parseFloat(document.getElementById("Ti0").value);
+    const side = parseFloat(document.getElementById("side").value);
+    const Vml  = parseFloat(document.getElementById("Vml").value);
+    const stir = document.getElementById("stir").value;
+    const cup  = document.getElementById("cup").value;
+    const plotMin = parseFloat(document.getElementById("plotMin").value);
+    return {Ta, Tl0, Ti0, side, Vml, stir, cup, plotMin};
+  }
+
+  // ---- Simulation ----
+  // State:
+  // - liquid temp Tl (°C)
+  // - ice mass mi (kg)
+  // Heat flows:
+  // q_liq_to_ice = h_liq * A_ice(mi) * (Tl - 0) for Tl>0 and mi>0
+  // q_amb_to_liq = UA * (Ta - Tl)
+  // ODE:
+  // m_liq cp dTl/dt = - q_liq_to_ice + q_amb_to_liq
+  // mi decreases by q_liq_to_ice / Lf_eff, where Lf_eff includes initial ice warm-up to 0:
+  // Lf_eff = Lf + cpIce*(0 - Ti0) if Ti0<0 else Lf
+  function simulate(params){
+    const {Ta, Tl0, Ti0, side, Vml, stir, cup} = params;
+
+    // Geometry and masses
+    const s0 = Math.max(0.001, side/100.0); // m
+    let mi = rhoIce * Math.pow(s0, 3);      // kg (single cube)
+    const mi0 = mi;
+
+    const V = Math.max(1, Vml)/1e6;         // m^3
+    const mliq = rhoW * V;                  // kg
+
+    const hL = hLiquid(stir);
+    const UA = UAForCup(cup);
+
+    // Effective enthalpy per kg of ice to become liquid at 0°C
+    const LfEff = (Ti0 < 0) ? (Lf + cpIce*(0 - Ti0)) : Lf;
+
+    let Tl = Tl0;
+    const dt = 1.0; // seconds
+    const maxT = 6 * 3600; // cap at 6 hours for safety in-browser
+    let t = 0;
+
+    const tArr = [];
+    const TlArr = [];
+    const fracArr = [];
+
+    function AiceFromMass(m){
+      // cube side from mass: m = rho s^3 => s=(m/rho)^(1/3); A=6 s^2
+      const s = Math.pow(Math.max(0, m)/rhoIce, 1/3);
+      return 6.0 * s * s;
+    }
+
+    // Early exit if liquid starts <=0°C (no net melting in this model)
+    if (Tl0 <= 0){
+      // still simulate temperature relaxation toward ambient (optional)
+      for(let i=0;i<Math.min(1200, maxT);i++){
+        tArr.push(t);
+        TlArr.push(Tl);
+        fracArr.push(100.0);
+        const qAmb = UA * (Ta - Tl);
+        const dTl = (qAmb / (mliq*cpW)) * dt;
+        Tl += dTl;
+        t += dt;
+      }
+      return {tArr, TlArr, fracArr, meltTime: Infinity, hL, UA, mi0, LfEff};
+    }
+
+    let meltTime = Infinity;
+
+    while(t <= maxT){
+      // record
+      tArr.push(t);
+      TlArr.push(Tl);
+      fracArr.push( (mi/mi0)*100.0 );
+
+      if (mi <= 0 && !isFinite(meltTime)) {
+        meltTime = t;
+        break;
+      }
+      if (mi <= 0){
+        break;
+      }
+
+      // heat from liquid to ice
+      const Aice = AiceFromMass(mi);
+      const dT = Math.max(0, Tl - 0.0);
+      const qL2I = hL * Aice * dT;  // W = J/s
+
+      // ambient to liquid
+      const qAmb = UA * (Ta - Tl);  // W
+
+      // liquid temperature update
+      const dTl = ((-qL2I + qAmb) / (mliq * cpW)) * dt;
+      Tl += dTl;
+
+      // ice melt update (only from qL2I)
+      const dmi = (qL2I / LfEff) * dt; // kg melted in dt
+      mi -= dmi;
+
+      t += dt;
+
+      // stop if the system gets stuck with Tl ~ 0 and melt is glacial
+      if (t > 60 && Tl < 0.05 && qL2I < 1e-3) {
+        meltTime = Infinity;
+        break;
+      }
+    }
+
+    if (mi <= 0) meltTime = tArr[tArr.length-1];
+
+    return {tArr, TlArr, fracArr, meltTime, hL, UA, mi0, LfEff};
+  }
+
+  // ---- Chart (no external libs) ----
+  function drawChart(canvas, series, plotSeconds){
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0,0,W,H);
+
+    // Padding
+    const padL = 54, padR = 54, padT = 14, padB = 36;
+    const x0 = padL, x1 = W - padR, y0 = padT, y1 = H - padB;
+
+    // Determine domain
+    const tMax = plotSeconds;
+    const {tArr, TlArr, fracArr} = series;
+
+    // Determine temperature range in the plotted window
+    let tMin = 0;
+    let tHi = tMax;
+    let Tmin = Infinity, Tmax = -Infinity;
+    for(let i=0;i<tArr.length;i++){
+      const t = tArr[i];
+      if (t < tMin || t > tHi) continue;
+      Tmin = Math.min(Tmin, TlArr[i]);
+      Tmax = Math.max(Tmax, TlArr[i]);
+    }
+    if (!isFinite(Tmin)) { Tmin = 0; Tmax = 1; }
+
+    // Expand range slightly
+    const span = Math.max(1e-6, Tmax - Tmin);
+    Tmin -= 0.1*span; Tmax += 0.1*span;
+
+    // Helpers
+    const x = (t)=> x0 + ( (t - tMin) / (tHi - tMin) ) * (x1 - x0);
+    const yT = (T)=> y1 - ( (T - Tmin) / (Tmax - Tmin) ) * (y1 - y0);
+    // right-axis: ice fraction 0..100
+    const yF = (f)=> y1 - (f/100.0) * (y1 - y0);
+
+    // Axes
+    ctx.strokeStyle = "#222";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0, y1);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+
+    // Right axis line
+    ctx.beginPath();
+    ctx.moveTo(x1, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+
+    // Grid + ticks (x: minutes)
+    ctx.fillStyle = "#222";
+    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+    const minutesMax = Math.max(1, Math.round(tHi/60));
+    const xTickCount = 6;
+    for(let i=0;i<=xTickCount;i++){
+      const tm = (i/xTickCount) * tHi;
+      const xx = x(tm);
+      ctx.strokeStyle = "#eee";
+      ctx.beginPath();
+      ctx.moveTo(xx, y0);
+      ctx.lineTo(xx, y1);
+      ctx.stroke();
+
+      ctx.fillStyle = "#222";
+      ctx.textAlign = "center";
+      ctx.fillText(`${Math.round(tm/60)}`, xx, H-12);
+    }
+    ctx.textAlign = "center";
+    ctx.fillText("time (min)", (x0+x1)/2, H-2);
+
+    // Left y ticks (temperature)
+    const yTickCount = 5;
+    for(let i=0;i<=yTickCount;i++){
+      const T = Tmin + (i/yTickCount)*(Tmax-Tmin);
+      const yy = yT(T);
+      ctx.strokeStyle = "#eee";
+      ctx.beginPath();
+      ctx.moveTo(x0, yy);
+      ctx.lineTo(x1, yy);
+      ctx.stroke();
+
+      ctx.fillStyle = "#222";
+      ctx.textAlign = "right";
+      ctx.fillText(`${T.toFixed(1)}`, x0-8, yy+4);
+    }
+    ctx.save();
+    ctx.translate(14, (y0+y1)/2);
+    ctx.rotate(-Math.PI/2);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#222";
+    ctx.fillText("drink temp (°C)", 0, 0);
+    ctx.restore();
+
+    // Right y ticks (ice %)
+    for(let i=0;i<=5;i++){
+      const f = i*20;
+      const yy = yF(f);
+      ctx.fillStyle = "#222";
+      ctx.textAlign = "left";
+      ctx.fillText(`${f}%`, x1+8, yy+4);
+    }
+    ctx.save();
+    ctx.translate(W-14, (y0+y1)/2);
+    ctx.rotate(-Math.PI/2);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#222";
+    ctx.fillText("ice remaining (%)", 0, 0);
+    ctx.restore();
+
+    // Series 1: temperature line (black)
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let started = false;
+    for(let i=0;i<tArr.length;i++){
+      const t = tArr[i];
+      if (t > tHi) break;
+      const xx = x(t), yy = yT(TlArr[i]);
+      if (!started) { ctx.moveTo(xx, yy); started = true; }
+      else ctx.lineTo(xx, yy);
+    }
+    ctx.stroke();
+
+    // Series 2: ice fraction line (gray dashed)
+    ctx.strokeStyle = "#666";
+    ctx.setLineDash([6,4]);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    started = false;
+    for(let i=0;i<tArr.length;i++){
+      const t = tArr[i];
+      if (t > tHi) break;
+      const xx = x(t), yy = yF(fracArr[i]);
+      if (!started) { ctx.moveTo(xx, yy); started = true; }
+      else ctx.lineTo(xx, yy);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Legend
+    ctx.fillStyle = "#000";
+    ctx.textAlign = "left";
+    ctx.fillText("— drink temp", x0+8, y0+14);
+    ctx.fillStyle = "#666";
+    ctx.fillText("-- ice remaining", x0+8, y0+30);
+  }
+
+  // ---- UI wiring ----
+  function setVal(id, v){
+    const el = document.getElementById(id);
+    el.value = (Number.isFinite(v) ? v : el.value);
+  }
+
+  function attachStepper(){
+    document.querySelectorAll("button[data-step]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const target = btn.getAttribute("data-target");
+        const step = parseFloat(btn.getAttribute("data-step"));
+        const el = document.getElementById(target);
+        const cur = parseFloat(el.value);
+        const next = (isFinite(cur) ? cur : 0) + step;
+        el.value = next;
+        recalc();
+      });
+    });
+  }
+
+  let lastSeries = null;
+
+  function recalc(){
+    const p = readInputs();
+
+    // Basic sanity bounds (demo-friendly)
+    p.side = clamp(p.side, 0.5, 10);
+    p.Vml  = clamp(p.Vml, 20, 2000);
+    p.plotMin = clamp(p.plotMin, 5, 240);
+
+    // write back if clamped
+    setVal("side", p.side);
+    setVal("Vml", p.Vml);
+    setVal("plotMin", p.plotMin);
+
+    const series = simulate(p);
+    lastSeries = series;
+
+    const out = document.getElementById("out");
+    const meta = document.getElementById("meta");
+
+    if (!isFinite(series.meltTime)){
+      out.innerHTML = `<span class="warn">Estimated time to fully melt: ∞ (won’t fully melt under these conditions)</span>`;
+    } else {
+      out.textContent = `Estimated time to fully melt: ${fmtTime(series.meltTime)}`;
+    }
+
+    const grams = series.mi0 * 1000;
+    meta.textContent = `h_liquid≈${series.hL} W/m²·K • UA≈${series.UA} W/K • ice mass≈${grams.toFixed(1)} g • effective melt enthalpy≈${(series.LfEff/1000).toFixed(0)} kJ/kg`;
+
+    // Plot length: at least requested, but extend if melt time is longer (up to 6h cap)
+    let plotSeconds = p.plotMin*60;
+    if (isFinite(series.meltTime)) plotSeconds = Math.max(plotSeconds, Math.min(series.meltTime, 6*3600));
+    drawChart(document.getElementById("chart"), series, plotSeconds);
+  }
+
+  function attachAutoRecalc(){
+    const ids = ["Ta","Tl0","Ti0","side","Vml","stir","cup","plotMin"];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      ["input","change"].forEach(ev => el.addEventListener(ev, recalc));
+    });
+  }
+
+  attachStepper();
+  attachAutoRecalc();
+  recalc();
+})();
+</script>
+</body>
+</html>
