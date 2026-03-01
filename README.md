@@ -1,3 +1,5 @@
+Open live at https://laurobrcwb.github.io/ice-melt-calculator/index.html
+
 # ice-in-drink melt demo calculator
 
 Single-file web tool (`index.html`) to demonstrate how fast an ice cube melts inside a drink given:
